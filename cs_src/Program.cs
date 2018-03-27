@@ -18,7 +18,7 @@ namespace SvnCommitManager
     static string _filerFl;
     static string _tmpbat;
     static long _strtRev;
-    static long _endRec;
+    static long _endRev;
     static bool _excDel;
     static string _workdir;
 
@@ -26,15 +26,20 @@ namespace SvnCommitManager
 
     static void Main(string[] args)
     {
-      try
-      {
+      Console.WriteLine(@"抽出処理を開始します。");
+      Console.WriteLine(@"");
 #if DEBUG
-        createAutoBatTest();
+      createAutoBatTest();
 #else
+      try 
+      {
         setupCommandLineAnalizer();
         createAutoBat();
 #endif
-      }
+#if DEBUG
+
+#else
+    }
       catch (SvnClientUnrelatedResourcesException e)
       {
         Console.WriteLine(string.Format(@"エラー内容：{0}", @"指定されたリビジョンにこのリポジトリのログがありません"));
@@ -49,8 +54,12 @@ namespace SvnCommitManager
           Console.WriteLine(string.Format(@"エラー内容    ：{0}", e.Message));
         }
       }
+#endif
 #if DEBUG
-      Console.ReadLine();
+      Console.WriteLine(@"");
+      Console.WriteLine(@"出力処理が完了しました。");
+      Console.WriteLine(@"終了するにはなにかキーを押してください。");
+      Console.ReadKey();
 #endif
     }
 
@@ -108,8 +117,8 @@ namespace SvnCommitManager
       _psswd = co_psswd.arg;
       _filerFl = co_filerFl.arg;
       _strtRev = long.Parse(co_strtRev.arg);
-      _endRec = long.Parse(co_endRev.arg);
-      if (_strtRev > _endRec)
+      _endRev = long.Parse(co_endRev.arg);
+      if (_strtRev > _endRev)
         throw new Exception(@"-sttRevと-endRevの大小関係が不正です。-sttRevは-EndRev以下である必要があります。");
       _tmpbat = co_tmpbat.arg;
       _excDel = false;
@@ -121,9 +130,8 @@ namespace SvnCommitManager
     static void createAutoBat()
     {
       var sc = new SvnConnector(_src, _user, _psswd);
-      var rs = sc.getLog(_strtRev, _endRec);
       sc.readFilterFile(_filerFl);
-      sc.createAutoCommitBat(rs, _workdir, _tmpbat, _excDel);
+      sc.createAutoCommitBat(_strtRev, _endRev, _workdir, _tmpbat, _excDel);
 
       sc.clearAuth();
     }
@@ -134,17 +142,16 @@ namespace SvnCommitManager
       _user = @"user";
       _psswd = @"admin";
       _filerFl = @"C:\Temp\svn\filter.txt";
-      _strtRev = 15;
-      _endRec = 15;
+      _strtRev = 10;
+      _endRev = 31;
       _tmpbat = @"C:\Temp\svn\tmp\tmp.bat";
-      _workdir = @"C:\Temp\svn\topath\20180323";
+      _workdir = @"C:\Temp\svn\topath\20180326";
       //_excDel = false;
       _excDel = true;
 
       var sc = new SvnConnector(_wrk, _user, _psswd);
-      var rs = sc.getLog(_strtRev, _endRec);
       sc.readFilterFile(_filerFl);
-      sc.createAutoCommitBat(rs, _workdir, _tmpbat, _excDel);
+      sc.createAutoCommitBat(_strtRev,_endRev, _workdir, _tmpbat, _excDel);
 
       sc.clearAuth();
     }

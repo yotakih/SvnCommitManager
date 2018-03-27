@@ -17,6 +17,7 @@ namespace SvnCommitManager
     private Uri _reporoot;
     private string _repoIdntfr;
     private string[] _filterList;
+    private ExcelStream _exlStm;
 
     public int viewLimit = 100;
 
@@ -54,17 +55,6 @@ namespace SvnCommitManager
         Console.WriteLine(e.Message);
       }
       this.getInfo();
-    }
-
-    public Collection<SvnLogEventArgs> getLog(long strtRev, long endRev)
-    {
-      var args = new SvnLogArgs()
-      {
-        Range = new SvnRevisionRange(strtRev, endRev)
-      };
-      Collection<SvnLogEventArgs> result;
-      this._svncl.GetLog(this._uri, args, out result);
-      return result;
     }
 
     public Collection<SvnLogEventArgs> getHeadLog()
@@ -118,51 +108,81 @@ namespace SvnCommitManager
           tmp.Add(i);
     }
 
-    public void createAutoCommitBat(Collection<SvnLogEventArgs> logs, string toRootPath, string tmpKickBatPath, bool excDel)
+    public void createAutoCommitBat(long sttrev, long endrev, string toRootPath, string tmpKickBatPath, bool excDel)
     {
-      if (!File.Exists(tmpKickBatPath))
-        throw new FileNotFoundException(
-            string.Format(@"テンプレートバッチファイルがありません。:{0}", tmpKickBatPath)
-        );
+#if DEBUG
 
-      var trgtLst = new Collection<long[]>();
-      var expDir = Path.Combine(toRootPath, @"10_抽出ファイル");
-      var chkDir = Path.Combine(toRootPath, @"20_対象一覧CSV");
+#else
+      try
+      {
+#endif
+        if (!File.Exists(tmpKickBatPath))
+          throw new FileNotFoundException(
+              string.Format(@"テンプレートバッチファイルがありません。:{0}", tmpKickBatPath)
+          );
+        if (Directory.Exists(toRootPath))
+          throw new Exception(
+            string.Format(@"すでに出力先フォルダが存在します。：{0}", toRootPath)
+          );
+
+        var expDir = Path.Combine(toRootPath, @"10_抽出ファイル");
+//        var chkDir = Path.Combine(toRootPath, @"20_対象一覧CSV");
+
+        if (!Directory.Exists(toRootPath)) Directory.CreateDirectory(toRootPath);
+        if (!Directory.Exists(expDir)) Directory.CreateDirectory(expDir);
+//        if (!Directory.Exists(chkDir)) Directory.CreateDirectory(chkDir);
+
+        this._exlStm = new ExcelStream();
+        this._exlStm.opnWrkBook(Path.Combine(toRootPath, "対象一覧.xlsx"));
+
+        ana_logs(sttrev, endrev, expDir, excDel, toRootPath, tmpKickBatPath);
+#if DEBUG
+      this._exlStm.save();
+      this._exlStm.close();
+#else
+    }
+      catch(Exception e)
+      {
+        Console.WriteLine(e.Message);
+      }
+      finally
+      {
+        if (this._exlStm != null)
+        {
+          this._exlStm.save();
+          this._exlStm.close();
+        }
+      }
+#endif
+    }
+
+    private void ana_logs(long strtRev, long endRev, string expDir, bool excDel,string toRootPath,string tmpKickBatPath)
+    {
+      var args = new SvnLogArgs()
+      {
+        Range = new SvnRevisionRange(strtRev, endRev)
+      };
+      Collection<SvnLogEventArgs> logs;
+      this._svncl.GetLog(this._uri, args, out logs);
+      logs = new Collection<SvnLogEventArgs>(logs.OrderBy(v => v.Revision).Select(v => v).ToArray());
+      var trgtLst = ana_revfiles(logs, expDir, excDel);
+
+      var batFlNm = string.Format(@"r{0}to{1}.bat", trgtLst[0][1], trgtLst[trgtLst.Count - 1][1]);
       var existTrgtCmd = @"rem rev:{0}" + Environment.NewLine +
                          @"call ""%workDir%\{0}.bat"" ""{1}""" + Environment.NewLine;
       var notExistTrgtCmd = @"rem rev:{0} 対象なし" + Environment.NewLine +
                             @"rem call %workDir%\{0}.bat ""{1}""" + Environment.NewLine;
-      if (!Directory.Exists(toRootPath))
-        Directory.CreateDirectory(toRootPath);
-      if (!Directory.Exists(expDir))
-        Directory.CreateDirectory(expDir);
-      if (!Directory.Exists(chkDir))
-        Directory.CreateDirectory(chkDir);
-
-      foreach (var log in logs)
-      {
-        if (exportFileFromLog(log, expDir, chkDir, excDel))
-        {
-          trgtLst.Add(new long[] { 1, log.Revision });
-        }
-        else
-        {
-          trgtLst.Add(new long[] { -1, log.Revision });
-        }
-      }
-      trgtLst = new Collection<long[]>(trgtLst.OrderBy(t => t[1]).Select(t => t).ToArray());
-      var batFlNm = string.Format(@"r{0}to{1}.bat", trgtLst[0][1], trgtLst[trgtLst.Count - 1][1]);
       using (var sw = createAutoBatStrm(expDir, batFlNm))
       {
         foreach (var trgt in trgtLst)
         {
           if (trgt[0] > 0)
           {
-            sw.WriteLine(string.Format(existTrgtCmd, retPadLeftZero(trgt[1]), @"%dstDir%"));
+            sw.WriteLine(string.Format(existTrgtCmd, @"r" + retPadLeftZero(trgt[1]), @"%dstDir%"));
           }
           else
           {
-            sw.WriteLine(string.Format(notExistTrgtCmd, retPadLeftZero(trgt[1]), @"dstDir%"));
+            sw.WriteLine(string.Format(notExistTrgtCmd, @"r" + retPadLeftZero(trgt[1]), @"dstDir%"));
           }
         }
       }
@@ -206,11 +226,24 @@ namespace SvnCommitManager
       return sw;
     }
 
-    public bool exportFileFromLog(SvnLogEventArgs log, string expdir, string csvdir, bool excDel)
+    private Collection<long[]> ana_revfiles(Collection<SvnLogEventArgs> logs, string expDir, bool excDel)
     {
+      var trgtLst = new Collection<long[]>();
+      foreach (var log in logs)
+        if (exportFileFromLog(log, expDir, excDel))
+          trgtLst.Add(new long[] { 1, log.Revision });
+        else
+          trgtLst.Add(new long[] { -1, log.Revision });
+      return trgtLst;
+    }
+
+    public bool exportFileFromLog(SvnLogEventArgs log, string expdir, bool excDel)
+    {
+      Console.WriteLine(string.Format(@"リビジョン：{0}　を抽出します。", log.Revision));
       var revname = retPadLeftZero(log.Revision);
       var toRevPath = expdir + @"\" + @"r" + revname;
-      var trgtFlLst = this.filterLogFiles(log.ChangedPaths, this._filterList, csvdir, revname, excDel);
+      this._exlStm.addRevSht(@"r" + revname,log.LogMessage);
+      var trgtFlLst = this.filterLogFiles(log.ChangedPaths, this._filterList, revname, excDel);
       if (trgtFlLst.Count == 0)
       {
         Directory.CreateDirectory(toRevPath + @"_対象なし");
@@ -260,22 +293,26 @@ namespace SvnCommitManager
     }
 
     private Collection<SvnChangeItem> filterLogFiles(Collection<SvnChangeItem> items
-                                                    , string[] fltrs, string dir, string revname, bool excDel)
+                                                    , string[] fltrs, string revname, bool excDel)
     {
-      var fltrRsltPath = Path.Combine(dir,@"r" + revname + @".csv");
       var lst = new Collection<SvnChangeItem>();
+      /*
+      var fltrRsltPath = Path.Combine(dir,@"r" + revname + @".csv");
       var dlms = ',';
       using (var sw = new StreamWriter(fltrRsltPath, false, Encoding.GetEncoding(932)))
       {
         //タイトル行を書き込み
         sw.WriteLine(string.Format(@"action{0}folder{0}file{0}抽出対象", dlms));
-        foreach (var i in items)
+     */
+      foreach (var i in items)
         {
           if (i.NodeKind != SvnNodeKind.File)
             continue;
           var path = i.Path.Replace(@"/", @"\");
+        /*
           sw.Write(@"{1}{0}{2}{0}{3}{0}", dlms, i.Action.ToString()
                                         , Path.GetDirectoryName(path), Path.GetFileName(path));
+        */
           var hitFlg = false;
           if (i.Action != SvnChangeAction.Delete || excDel)
           {
@@ -292,14 +329,26 @@ namespace SvnCommitManager
           if (hitFlg)
           {
             lst.Add(i);
-            sw.WriteLine(@"○");
+//            sw.WriteLine(@"○");
+            this._exlStm.wrtRevRow(new string[] {
+              i.Action.ToString(),
+              Path.GetDirectoryName(path),
+              Path.GetFileName(path),
+              @"○"
+            });
           }
           else
           {
-            sw.WriteLine(@"");
+//            sw.WriteLine(@"");
+            this._exlStm.wrtRevRow(new string[] {
+              i.Action.ToString(),
+              Path.GetDirectoryName(path),
+              Path.GetFileName(path),
+              @""
+            });
           }
         }
-      }
+//      }
       return lst;
     }
 
